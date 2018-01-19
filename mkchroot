@@ -1,0 +1,116 @@
+#!/bin/bash
+
+die() { echo "$*" >&2; exit 1; }
+
+# disable globbing by default
+set -f
+
+debug=0
+add=0
+umask=022
+size=32k
+
+while getopts ":adu:z:" o; do case $o in
+    a) add=1;;
+    d) debug=1;;
+    u) umask=$OPTARG;;
+    z) size=$OPTARG;;
+    *) die "Invalid option -$o";;
+esac; done
+
+shift $((OPTIND-1))
+chroot=$1
+
+[ "$chroot" ] || die 'Usage:
+
+    mkchroot [options] /path/to/chroot < object.spec
+
+Create specified chroot directory, options are:
+
+    -a       - add to an existing chroot
+    -d       - print debug info
+    -u umask - set the umask, default is 022
+    -z size  - max memory size of a new chroot, default is 32K (see tmpfs size option in man mount)
+
+If -a, then the chroot must already exist and -z is ignored.
+
+Otherwise the specified path must not exist. The directory is created, and a
+tmpfs of specified maximum size is mounted on it.
+
+Object specifications are then read from stdin. #comments and blank lines
+ignored. A valid line is in the form:
+
+   [ perm [ ... perm ] : ] /path/to/object [... /path/to/object]
+
+That is, it names one or more objects in the root that will be imported to the
+same path in the chroot. 
+
+Absolute path names are required. Globs are supported and will expand into all
+matching names. 
+
+Allowed objects are device nodes, symlinks, files, or directories. 
+
+Device nodes and symlinks are copied verbatim. 
+
+Files and directories are bind mounted. By default, bind mounts are read-only,
+noexec, and nodev.  However if the line contains a ":", then tokens to the left
+are treated as permission flags, presence of "rw", "exec", and/or "dev" will
+disable the corresponding mount options for all objects on the line.
+
+(If an object name contains ":" for some reason, then the line must start with
+":" even if no special permissions are required.)
+
+Exit status is 0 if the chroot was created and all objects imported. Otherwise
+status is non-zero and and the partially constructed chroot may be left in
+place (use rmchroot to delete it).
+'
+
+if ((add)); then
+    [ -d $chroot ] || die "$chroot doesn't exist"
+    chroot=$(readlink -f $chroot)
+    grep -q "^tmpfs $chroot " /proc/mounts || die "$chroot does not seem to be a valid chroot"
+    umask $umask
+else
+    [ -e $chroot ] && die "$chroot already exists"
+    # create it
+    umask $umask
+    mkdir -p $chroot || die "Failed to create $chroot"
+    chroot=$(readlink -f $chroot)
+    # create the container tmpfs
+    mount -t tmpfs -osize=$size,nosuid,noexec tmpfs $chroot || die "Failed to mount tmpfs on $chroot"
+fi
+
+# parse stdin
+while read input; do
+    # strip comments
+    input=$(echo ${input%%#*})
+    
+    # everything up to first : is permissions
+    perms=$(echo ${input%%:*})
+    input=$(echo ${input#*:})
+
+    opts="nosuid"
+    grep -qwi "dev" <<< $perms || opts+=",nodev"
+    grep -qwi "exec" <<< $perms || opts+=",noexec"
+    grep -qwi "rw" <<< $perms || opts+=",readonly"
+
+    # expand globs and import each object
+    for obj in $(set +f; shopt -s nullglob extglob dotglob; echo $input); do
+        [[ "$obj" == /* ]] || die "$obj path is not absolute"
+        [ -e $obj ] || die "$obj does not exist"
+        # make sure parent dir exists
+        mkdir -p $chroot${obj%/*}
+        if [[ -L $obj || -c $obj || -b $obj ]]; then
+            ((debug)) && echo "Copying $obj"
+            cp -a $obj $chroot$obj || die "Failed to cp $obj"
+        elif [ -d $obj ]; then
+            ((debug)) && echo "Binding directory $obj (opts=$opts)"
+            mkdir $chroot$obj && mount -B -o $opts $obj $chroot$obj || die "Failed to bind $obj"
+        elif [ -f $obj ]; then
+            ((debug)) && echo "Binding file $obj (opts=$opts)"
+            :>$chroot$obj && mount -B -o $opts $obj $chroot$obj || die "Failed to bind $obj"
+        else
+            die "Don't know how to import $obj"
+        fi
+    done
+done

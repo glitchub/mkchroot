@@ -1,0 +1,21 @@
+#!/bin/bash
+# Remove a chroot created by mkchroot
+
+die() { echo "$*" >&2; exit 1; }
+
+(($#==1)) || die "Usage: rmchroot /path/to/chroot"
+
+chroot=$(readlink -f $1)
+[ -d "$chroot" ] || die "$1 doesn't exist"
+
+# The candidate chroot must have tmpfs mounted on it. If so, search
+# /proc/mounts for all child mounts, umount in descending order of path length,
+# finally umount the containing tmpfs. Some kernels have a bug that appends the
+# mountpoint name with string "\040(deleted)", ignore that.
+if grep -q "^tmpfs $chroot " /proc/mounts; then
+   awk '$2~"^'$chroot'/"{print length($2)" "$2}' < /proc/mounts | sort -rn | while read a b; do umount -n $b; done
+   umount -n $chroot
+fi
+
+# In theory the directory is now empty
+rmdir $chroot || die "Unable to remove $chroot, sorry about that"
