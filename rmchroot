@@ -10,8 +10,7 @@ chroot=$(readlink -f $1)
 
 # The candidate chroot must have tmpfs mounted on it. If so, search
 # /proc/mounts for all child mounts, umount in descending order of path length,
-# finally umount the containing tmpfs. Some kernels have a bug that appends the
-# mountpoint name with string "\040(deleted)", ignore that.
+# finally umount the containing tmpfs.
 if grep -q "^tmpfs $chroot " /proc/mounts; then
    awk '$2~"^'$chroot'/"{print length($2)" "$2}' < /proc/mounts | sort -rn | while read a b; do umount -n $b; done
    umount -n $chroot
