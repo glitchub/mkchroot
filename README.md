@@ -23,7 +23,7 @@ a tmpfs of specified maximum size is mounted on it.
 Object specifications are then read from stdin. #comments and blank lines
 ignored. A valid line is in the form:
 
-   [ [ perm [ ... perm ] ] : ] /path/to/object [ ... /path/to/object ]
+    [ [ perm [ ... perm ] ] : ] /path/to/object [ ... /path/to/object ]
 
 That is, it names one or more objects in the root that will be imported to the
 same path in the chroot directory. 
