@@ -1,16 +1,25 @@
 #!/bin/bash
-# Remove a chroot created by mkchroot
 
 die() { echo "$*" >&2; exit 1; }
 
-(($#==1)) || die "Usage: rmchroot /path/to/chroot"
+(($#==1)) || die 'Usage: 
+    
+    rmchroot /path/to/chroot
+
+Delete a chroot directory created by mkchroot. 
+
+If the specified directory has a tmpfs mounted on it, then search /proc/mounts
+for all objects mounted into that directory and unmount them in descending
+order of path length, ending with the containing tmpfs. Then remove the
+directory. 
+
+Exit status is 0 if the chroot was removed successfully. Otherwise status is
+non-zero and and the partially deconstructed chroot may be left in place.
+'
 
 chroot=$(readlink -f $1)
 [ -d "$chroot" ] || die "$1 doesn't exist"
 
-# The candidate chroot must have tmpfs mounted on it. If so, search
-# /proc/mounts for all child mounts, umount in descending order of path length,
-# finally umount the containing tmpfs.
 if grep -q "^tmpfs $chroot " /proc/mounts; then
    awk '$2~"^'$chroot'/"{print length($2)" "$2}' < /proc/mounts | sort -rn | while read a b; do umount -n $b; done
    umount -n $chroot
